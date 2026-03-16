@@ -143,22 +143,27 @@ class SonarQubeClient:
 
     # ── Projects ──────────────────────────────────────────────────────────────
 
-    async def get_all_projects(self, client: httpx.AsyncClient) -> list[dict]:
-        """Fetch every project using pagination."""
+    async def get_all_projects(self, client: httpx.AsyncClient,
+                               limit: int = 0) -> list[dict]:
+        """Fetch projects using pagination. Stops early if limit > 0."""
         projects, page = [], 1
-        pbar = tqdm(desc="Fetching projects", unit="project")
+        pbar = tqdm(desc="Fetching projects", unit="project",
+                    total=limit if limit else None)
         try:
             while True:
+                page_size = min(PAGE_SIZE, limit - len(projects)) if limit else PAGE_SIZE
                 data = await self._get(client, "/api/projects/search",
-                                       {"ps": PAGE_SIZE, "p": page})
+                                       {"ps": page_size, "p": page})
                 batch = data.get("components", [])
                 projects.extend(batch)
                 pg = data.get("paging", {})
-                if page == 1:
+                if page == 1 and not limit:
                     pbar.total = pg.get("total", 0)
                     pbar.refresh()
                 pbar.update(len(batch))
-                if pg.get("pageIndex", 1) * pg.get("pageSize", PAGE_SIZE) >= pg.get("total", 0):
+                if limit and len(projects) >= limit:
+                    break
+                if pg.get("pageIndex", 1) * pg.get("pageSize", page_size) >= pg.get("total", 0):
                     break
                 page += 1
         finally:
@@ -377,13 +382,11 @@ async def run(args: argparse.Namespace) -> list[ProjectReport]:
     async with httpx.AsyncClient(verify=not args.no_verify_ssl) as client:
 
         # ── Phase 1: project list (progress bar inside get_all_projects) ──────
-        projects = await sonar.get_all_projects(client)
-        total_found = len(projects)
+        projects = await sonar.get_all_projects(client, limit=args.limit)
         if args.limit:
-            projects = projects[:args.limit]
-            tqdm.write(f"\nFound {total_found} project(s). Limiting to first {args.limit}.\n")
+            tqdm.write(f"\nLimited to first {len(projects)} project(s).\n")
         else:
-            tqdm.write(f"\nFound {total_found} project(s).\n")
+            tqdm.write(f"\nFound {len(projects)} project(s).\n")
 
         # ── Phase 2: branch & PR lists for every project ──────────────────────
         async def fetch_lists(p: dict) -> tuple[list[dict], list[dict]]:
