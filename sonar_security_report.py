@@ -49,6 +49,9 @@ try:
 except ImportError:
     pass  # python-dotenv not installed; fall back to system environment
 
+from tqdm import tqdm
+from tqdm.asyncio import tqdm as atqdm
+
 from openpyxl import Workbook
 from openpyxl.styles import (Font, PatternFill, Alignment, Border, Side)
 from openpyxl.utils import get_column_letter
@@ -297,7 +300,7 @@ async def process_project(sonar: SonarQubeClient, client: httpx.AsyncClient,
                           project: dict) -> ProjectReport:
     key = project["key"]
     name = project["name"]
-    print(f"  → {name}  [{key}]", flush=True)
+    tqdm.write(f"  → {name}  [{key}]")
 
     # Branches and PRs in parallel
     branches_raw, prs_raw = await asyncio.gather(
@@ -349,8 +352,19 @@ async def run(args: argparse.Namespace) -> list[ProjectReport]:
         print(f"Found {len(projects)} project(s). Fetching branch/PR/security data ...\n",
               flush=True)
 
-        tasks = [process_project(sonar, client, p) for p in projects]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        async def _safe_process(project: dict):
+            try:
+                return await process_project(sonar, client, project)
+            except Exception as exc:
+                return exc
+
+        tasks = [_safe_process(p) for p in projects]
+        results = await atqdm.gather(
+            *tasks,
+            desc="Fetching security data",
+            unit="project",
+            total=len(projects),
+        )
 
     reports: list[ProjectReport] = []
     for i, r in enumerate(results):
@@ -663,7 +677,6 @@ def _write_security_sheet(
     fixed_headers: list[str],
     rows: list[dict],
     vuln_statuses: list[str],
-    vuln_severities: list[str],
 ) -> None:
     """Generic writer used for both Branches and Pull Requests sheets."""
     ws.title = title
@@ -672,25 +685,23 @@ def _write_security_sheet(
     # ── Row 1: group headers ──────────────────────────────────────────────────
     n_fixed  = len(fixed_headers)
     n_vs     = len(vuln_statuses)
-    n_vsev   = len(vuln_severities)
     n_hs     = len(HOTSPOT_STATUSES)
 
     # column ranges (1-based)
     vuln_start   = n_fixed + 1
-    vuln_end     = vuln_start + n_vs + n_vsev + 1 - 1   # total col + status cols + sev cols
+    vuln_end     = vuln_start + n_vs          # total col + status cols
     hs_start     = vuln_end + 1
-    hs_end       = hs_start + n_hs                       # total col + status cols
+    hs_end       = hs_start + n_hs            # total col + status cols
 
     # Group label cells (merged)
     _hdr_cell(ws, 1, 1, "",              fill=_HDR_FILL)
     if n_fixed > 1:
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_fixed)
 
-    if n_vs + n_vsev + 1 > 0:
-        _hdr_cell(ws, 1, vuln_start, "VULNERABILITIES", fill=_GRP_FILL)
-        if vuln_end > vuln_start:
-            ws.merge_cells(start_row=1, start_column=vuln_start,
-                           end_row=1, end_column=vuln_end)
+    _hdr_cell(ws, 1, vuln_start, "VULNERABILITIES", fill=_GRP_FILL)
+    if vuln_end > vuln_start:
+        ws.merge_cells(start_row=1, start_column=vuln_start,
+                       end_row=1, end_column=vuln_end)
 
     _hdr_cell(ws, 1, hs_start, "SECURITY HOTSPOTS", fill=_GRP_FILL)
     if hs_end > hs_start:
@@ -704,12 +715,10 @@ def _write_security_sheet(
     for h in fixed_headers:
         _hdr_cell(ws, 2, col, h); col += 1
 
-    # Vuln columns
+    # Vuln columns: total + by status
     _hdr_cell(ws, 2, col, "Total");          col += 1
     for s in vuln_statuses:
         _hdr_cell(ws, 2, col, s.replace("_", " ").title()); col += 1
-    for s in vuln_severities:
-        _hdr_cell(ws, 2, col, s.capitalize()); col += 1
 
     # Hotspot columns
     _hdr_cell(ws, 2, col, "Total");          col += 1
@@ -732,9 +741,6 @@ def _write_security_sheet(
         for s in vuln_statuses:
             v = vuln.by_status.get(s, 0)
             _body_cell(ws, row_idx, col, v or None, fill=vfill, align=_RIGHT); col += 1
-        for s in vuln_severities:
-            v = vuln.by_severity.get(s, 0)
-            _body_cell(ws, row_idx, col, v or None, fill=vfill, align=_RIGHT); col += 1
 
         hs  = item["hotspots"]
         hfill = _WARN_FILL if hs.total > 0 else fill
@@ -752,7 +758,7 @@ def _write_security_sheet(
 
 
 def _build_branches_sheet(ws, reports: list[ProjectReport],
-                           vuln_statuses: list[str], vuln_severities: list[str]) -> None:
+                           vuln_statuses: list[str]) -> None:
     fixed_headers = ["Project Name", "Project Key", "Branch", "Type", "Main?", "Last Scan"]
     rows = []
     for r in sorted(reports, key=lambda x: x.name.lower()):
@@ -770,12 +776,11 @@ def _build_branches_sheet(ws, reports: list[ProjectReport],
                 "hotspots": b.hotspots,
                 "date_col": 6,
             })
-    _write_security_sheet(ws, "Branches", fixed_headers, rows,
-                           vuln_statuses, vuln_severities)
+    _write_security_sheet(ws, "Branches", fixed_headers, rows, vuln_statuses)
 
 
 def _build_pr_sheet(ws, reports: list[ProjectReport],
-                    vuln_statuses: list[str], vuln_severities: list[str]) -> None:
+                    vuln_statuses: list[str]) -> None:
     fixed_headers = ["Project Name", "Project Key", "PR Key", "PR Title",
                      "Source Branch", "Target Branch", "Last Scan"]
     rows = []
@@ -795,21 +800,20 @@ def _build_pr_sheet(ws, reports: list[ProjectReport],
                 "hotspots": pr.hotspots,
                 "date_col": 7,
             })
-    _write_security_sheet(ws, "Pull Requests", fixed_headers, rows,
-                           vuln_statuses, vuln_severities)
+    _write_security_sheet(ws, "Pull Requests", fixed_headers, rows, vuln_statuses)
 
 
 def export_to_excel(reports: list[ProjectReport], path: str) -> None:
-    vuln_statuses, vuln_severities = _collect_dynamic_cols(reports)
+    vuln_statuses, _ = _collect_dynamic_cols(reports)
 
     wb = Workbook()
     # openpyxl creates a default sheet — rename it to Summary
     _build_summary_sheet(wb.active, reports)
-    _build_branches_sheet(wb.create_sheet(), reports, vuln_statuses, vuln_severities)
+    _build_branches_sheet(wb.create_sheet(), reports, vuln_statuses)
 
     has_prs = any(r.pull_requests for r in reports)
     if has_prs:
-        _build_pr_sheet(wb.create_sheet(), reports, vuln_statuses, vuln_severities)
+        _build_pr_sheet(wb.create_sheet(), reports, vuln_statuses)
 
     wb.save(path)
 
