@@ -35,6 +35,7 @@ python sonar_security_report.py \
 | `--output` | `sonar_report.json` | JSON output file path |
 | `--excel` | `sonar_report.xlsx` | Excel output file path |
 | `--concurrency` | `10` | Max parallel API requests |
+| `--limit` | `0` (all) | Process only the first N projects — useful for test runs against large instances |
 | `--summary-only` | off | Print summary table only, skip per-branch detail |
 | `--no-verify-ssl` | off | Disable SSL verification (for self-signed certs) |
 
@@ -58,14 +59,14 @@ One row per project. Grand total row at the bottom.
 
 **Sheet 2 — Branches**
 One row per project+branch. Columns are grouped into two bands:
-- **Vulnerabilities** — total, by status, by severity
+- **Vulnerabilities** — total, by status
 - **Security Hotspots** — total, by status
 
 **Sheet 3 — Pull Requests**
 Same layout as Branches, with additional PR metadata (title, source → target branch).
 Only created if at least one project has PR-based analysis configured.
 
-> Rows with vulnerabilities or hotspots are highlighted in orange. Vuln status and severity columns are dynamic — built from whatever statuses SonarQube returns, so the sheet stays accurate across SonarQube version upgrades.
+> Rows with vulnerabilities or hotspots are highlighted in orange. Vuln status columns are dynamic — built from whatever statuses SonarQube returns, so the sheet stays accurate across SonarQube version upgrades.
 
 ## Notes
 
