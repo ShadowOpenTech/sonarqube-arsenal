@@ -12,6 +12,7 @@ A growing collection of standalone automation and reporting scripts for [SonarQu
 |--------|-------------|------|
 | [`sonar_security_report.py`](sonar_security_report.py) | Fetch vulnerabilities & security hotspots across all projects, branches, and PRs. Outputs to console, JSON, and Excel. | [docs](docs/sonar_security_report.md) |
 | [`sonar_reopen_vulnerabilities.py`](sonar_reopen_vulnerabilities.py) | Reopen all non-OPEN, non-CLOSED vulnerabilities across a list of projects and all their branches. Supports dry-run mode. Outputs an Excel report. | [docs](docs/sonar_reopen_vulnerabilities.md) |
+| [`sonar_propagate_status.py`](sonar_propagate_status.py) | Propagates acknowledged issue statuses (CONFIRMED, FALSE_POSITIVE, ACCEPTED) from a source branch to matching OPEN issues on all other active branches. | [docs](docs/sonar_propagate_status.md) |
 | [`sonar_trend/`](sonar_trend/) | Three-script suite for vulnerability trend tracking: branch selection, periodic snapshots, and trend report with burndown charts by fleet / dept / code. | [docs](sonar_trend/README.md) |
 
 ---
