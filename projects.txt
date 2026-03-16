@@ -1,0 +1,6 @@
+# SonarQube project keys — one per line
+# Blank lines and lines starting with # are ignored
+#
+# Example:
+# my-org:my-app
+# com.example:backend-service
