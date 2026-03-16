@@ -38,6 +38,7 @@ import httpx
 import json
 import argparse
 import sys
+import os
 from dataclasses import dataclass, field
 from typing import Optional, Any
 from datetime import datetime, timezone
@@ -815,16 +816,19 @@ def parse_args() -> argparse.Namespace:
                     "across all projects, branches, and PRs.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--url", required=True,
-                   help="SonarQube base URL  e.g. http://sonar.example.com")
-    p.add_argument("--username", required=True, help="SonarQube username")
-    p.add_argument("--password", required=True, help="SonarQube password")
-    p.add_argument("--output", default="sonar_report.json",
-                   help="Path for the JSON output file")
-    p.add_argument("--excel", default="sonar_report.xlsx",
-                   help="Path for the Excel (.xlsx) output file")
-    p.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY,
-                   help="Max simultaneous API requests")
+    p.add_argument("--url",      default=os.getenv("SONAR_URL"),
+                   help="SonarQube base URL  e.g. http://sonar.example.com  [env: SONAR_URL]")
+    p.add_argument("--username", default=os.getenv("SONAR_USERNAME"),
+                   help="SonarQube username  [env: SONAR_USERNAME]")
+    p.add_argument("--password", default=os.getenv("SONAR_PASSWORD"),
+                   help="SonarQube password  [env: SONAR_PASSWORD]")
+    p.add_argument("--output",   default=os.getenv("SONAR_OUTPUT", "sonar_report.json"),
+                   help="Path for the JSON output file  [env: SONAR_OUTPUT]")
+    p.add_argument("--excel",    default=os.getenv("SONAR_EXCEL", "sonar_report.xlsx"),
+                   help="Path for the Excel (.xlsx) output file  [env: SONAR_EXCEL]")
+    p.add_argument("--concurrency", type=int,
+                   default=int(os.getenv("SONAR_CONCURRENCY", DEFAULT_CONCURRENCY)),
+                   help="Max simultaneous API requests  [env: SONAR_CONCURRENCY]")
     p.add_argument("--summary-only", action="store_true",
                    help="Print only the summary table, skip per-branch detail")
     p.add_argument("--no-verify-ssl", action="store_true",
@@ -835,6 +839,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    missing = [f"--{k}" for k, v in [("url", args.url), ("username", args.username), ("password", args.password)] if not v]
+    if missing:
+        print(f"Error: missing required values: {', '.join(missing)}\n"
+              f"Pass them as CLI args or set SONAR_URL / SONAR_USERNAME / SONAR_PASSWORD in your environment / .env file.",
+              file=sys.stderr)
+        sys.exit(1)
 
     print("SonarQube Security Report")
     print(f"  URL         : {args.url}")
