@@ -270,11 +270,19 @@ def _warn(msg: str) -> None:
 
 
 async def process_branch(sonar: SonarQubeClient, client: httpx.AsyncClient,
-                         project_key: str, branch: dict) -> BranchReport:
+                         project_key: str, branch: dict,
+                         pbar: Optional[tqdm] = None) -> BranchReport:
     name = branch["name"]
+
+    async def tick(coro):
+        result = await coro
+        if pbar:
+            pbar.update(1)
+        return result
+
     vuln_stats, hotspot_stats = await asyncio.gather(
-        sonar.get_vulnerability_stats(client, project_key, branch=name),
-        sonar.get_hotspot_stats(client, project_key, branch=name),
+        tick(sonar.get_vulnerability_stats(client, project_key, branch=name)),
+        tick(sonar.get_hotspot_stats(client, project_key, branch=name)),
     )
     return BranchReport(
         name=name,
@@ -287,11 +295,19 @@ async def process_branch(sonar: SonarQubeClient, client: httpx.AsyncClient,
 
 
 async def process_pull_request(sonar: SonarQubeClient, client: httpx.AsyncClient,
-                               project_key: str, pr: dict) -> PullRequestReport:
+                               project_key: str, pr: dict,
+                               pbar: Optional[tqdm] = None) -> PullRequestReport:
     key = str(pr["key"])
+
+    async def tick(coro):
+        result = await coro
+        if pbar:
+            pbar.update(1)
+        return result
+
     vuln_stats, hotspot_stats = await asyncio.gather(
-        sonar.get_vulnerability_stats(client, project_key, pull_request=key),
-        sonar.get_hotspot_stats(client, project_key, pull_request=key),
+        tick(sonar.get_vulnerability_stats(client, project_key, pull_request=key)),
+        tick(sonar.get_hotspot_stats(client, project_key, pull_request=key)),
     )
     return PullRequestReport(
         key=key,
@@ -312,21 +328,15 @@ async def process_project(sonar: SonarQubeClient, client: httpx.AsyncClient,
 
     async def do_branch(b: dict):
         try:
-            return await process_branch(sonar, client, key, b)
+            return await process_branch(sonar, client, key, b, pbar)
         except Exception as exc:
             return exc
-        finally:
-            if pbar:
-                pbar.update(1)
 
     async def do_pr(pr: dict):
         try:
-            return await process_pull_request(sonar, client, key, pr)
+            return await process_pull_request(sonar, client, key, pr, pbar)
         except Exception as exc:
             return exc
-        finally:
-            if pbar:
-                pbar.update(1)
 
     nb = len(branches_raw)
     all_results = await asyncio.gather(
@@ -368,7 +378,12 @@ async def run(args: argparse.Namespace) -> list[ProjectReport]:
 
         # ── Phase 1: project list (progress bar inside get_all_projects) ──────
         projects = await sonar.get_all_projects(client)
-        print(f"\nFound {len(projects)} project(s).\n", flush=True)
+        total_found = len(projects)
+        if args.limit:
+            projects = projects[:args.limit]
+            tqdm.write(f"\nFound {total_found} project(s). Limiting to first {args.limit}.\n")
+        else:
+            tqdm.write(f"\nFound {total_found} project(s).\n")
 
         # ── Phase 2: branch & PR lists for every project ──────────────────────
         async def fetch_lists(p: dict) -> tuple[list[dict], list[dict]]:
@@ -387,8 +402,8 @@ async def run(args: argparse.Namespace) -> list[ProjectReport]:
 
         # ── Phase 3: security data for every branch / PR ──────────────────────
         total_items = sum(len(b) + len(p) for b, p in list_results)
-        with tqdm(desc="Fetching security data", unit="branch/PR",
-                  total=total_items) as pbar:
+        with tqdm(desc="Fetching security data", unit="req",
+                  total=total_items * 2) as pbar:
             results = await asyncio.gather(
                 *[
                     process_project(sonar, client, proj, branches, prs, pbar)
@@ -870,6 +885,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--concurrency", type=int,
                    default=int(os.getenv("SONAR_CONCURRENCY", DEFAULT_CONCURRENCY)),
                    help="Max simultaneous API requests  [env: SONAR_CONCURRENCY]")
+    p.add_argument("--limit", type=int,
+                   default=int(os.getenv("SONAR_LIMIT", 0)),
+                   help="Process only the first N projects (0 = all)  [env: SONAR_LIMIT]")
     p.add_argument("--summary-only", action="store_true",
                    help="Print only the summary table, skip per-branch detail")
     p.add_argument("--no-verify-ssl", action="store_true",
@@ -892,6 +910,7 @@ def main() -> None:
     print(f"  URL         : {args.url}")
     print(f"  Username    : {args.username}")
     print(f"  Concurrency : {args.concurrency}")
+    print(f"  Project limit: {args.limit if args.limit else 'all'}")
     print(f"  JSON output : {args.output}")
     print(f"  Excel output: {args.excel}")
     print(f"  Verify SSL  : {not args.no_verify_ssl}")
