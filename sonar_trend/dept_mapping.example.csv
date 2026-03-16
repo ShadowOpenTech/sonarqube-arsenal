@@ -1,0 +1,6 @@
+CODE,DEPT,internetFacing,Critical
+PAYMENTS,Finance,true,true
+AUTH,Finance,true,true
+INVENTORY,Operations,false,true
+HRMS,HR,false,false
+REPORTING,Operations,false,false
