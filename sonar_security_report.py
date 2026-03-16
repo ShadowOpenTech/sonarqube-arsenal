@@ -233,13 +233,18 @@ class SonarQubeClient:
         self, client: httpx.AsyncClient, project_key: str,
         branch: str | None = None, pull_request: str | None = None,
     ) -> HotspotStats:
-        """One call per hotspot status (4 total), run concurrently."""
+        """One call per hotspot status (4 total), run concurrently.
+
+        TO_REVIEW uses status=TO_REVIEW.
+        ACKNOWLEDGED/FIXED/SAFE use status=REVIEWED + resolution=<value>.
+        """
         async def fetch_status(status: str) -> tuple[str, int]:
-            params: dict[str, Any] = {
-                "projectKey": project_key,
-                "status": status,
-                "ps": 1,
-            }
+            params: dict[str, Any] = {"projectKey": project_key, "ps": 1}
+            if status == "TO_REVIEW":
+                params["status"] = "TO_REVIEW"
+            else:
+                params["status"] = "REVIEWED"
+                params["resolution"] = status
             if branch:
                 params["branch"] = branch
             if pull_request:
@@ -587,8 +592,7 @@ def to_dict(reports: list[ProjectReport]) -> dict:
 # ── Excel export ─────────────────────────────────────────────────────────────
 
 # Preferred column ordering for dynamic status/severity values
-_VULN_STATUS_ORDER  = ["OPEN", "CONFIRMED", "REOPENED", "ACCEPTED",
-                        "FALSE_POSITIVE", "RESOLVED", "CLOSED"]
+_VULN_STATUS_ORDER  = ["OPEN", "CONFIRMED", "FALSE_POSITIVE", "ACCEPTED", "FIXED"]
 _VULN_SEV_ORDER     = ["BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"]
 
 # ── Styles ────────────────────────────────────────────────────────────────────
