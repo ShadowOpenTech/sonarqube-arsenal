@@ -266,7 +266,7 @@ class SonarQubeClient:
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def _warn(msg: str) -> None:
-    print(f"  [WARN] {msg}", file=sys.stderr, flush=True)
+    tqdm.write(f"  [WARN] {msg}", file=sys.stderr)
 
 
 async def process_branch(sonar: SonarQubeClient, client: httpx.AsyncClient,
