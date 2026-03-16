@@ -11,8 +11,10 @@ Generates a comprehensive security report across **all projects, all branches, a
 ## Requirements
 
 ```bash
-pip install httpx openpyxl
+pip install httpx openpyxl python-dotenv
 ```
+
+> `python-dotenv` is optional but recommended — it allows the script to auto-load a `.env` file from the project root so you don't need to pass credentials as CLI arguments. If not installed, the script falls back to system environment variables.
 
 ## Usage
 

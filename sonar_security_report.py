@@ -43,6 +43,12 @@ from dataclasses import dataclass, field
 from typing import Optional, Any
 from datetime import datetime, timezone
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed; fall back to system environment
+
 from openpyxl import Workbook
 from openpyxl.styles import (Font, PatternFill, Alignment, Border, Side)
 from openpyxl.utils import get_column_letter
