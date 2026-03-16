@@ -146,15 +146,23 @@ class SonarQubeClient:
     async def get_all_projects(self, client: httpx.AsyncClient) -> list[dict]:
         """Fetch every project using pagination."""
         projects, page = [], 1
-        while True:
-            data = await self._get(client, "/api/projects/search",
-                                   {"ps": PAGE_SIZE, "p": page})
-            batch = data.get("components", [])
-            projects.extend(batch)
-            pg = data.get("paging", {})
-            if pg.get("pageIndex", 1) * pg.get("pageSize", PAGE_SIZE) >= pg.get("total", 0):
-                break
-            page += 1
+        pbar = tqdm(desc="Fetching projects", unit="project")
+        try:
+            while True:
+                data = await self._get(client, "/api/projects/search",
+                                       {"ps": PAGE_SIZE, "p": page})
+                batch = data.get("components", [])
+                projects.extend(batch)
+                pg = data.get("paging", {})
+                if page == 1:
+                    pbar.total = pg.get("total", 0)
+                    pbar.refresh()
+                pbar.update(len(batch))
+                if pg.get("pageIndex", 1) * pg.get("pageSize", PAGE_SIZE) >= pg.get("total", 0):
+                    break
+                page += 1
+        finally:
+            pbar.close()
         return projects
 
     # ── Branches ──────────────────────────────────────────────────────────────
@@ -297,25 +305,35 @@ async def process_pull_request(sonar: SonarQubeClient, client: httpx.AsyncClient
 
 
 async def process_project(sonar: SonarQubeClient, client: httpx.AsyncClient,
-                          project: dict) -> ProjectReport:
+                          project: dict, branches_raw: list[dict],
+                          prs_raw: list[dict],
+                          pbar: Optional[tqdm] = None) -> ProjectReport:
     key = project["key"]
-    name = project["name"]
-    tqdm.write(f"  → {name}  [{key}]")
 
-    # Branches and PRs in parallel
-    branches_raw, prs_raw = await asyncio.gather(
-        sonar.get_branches(client, key),
-        sonar.get_pull_requests(client, key),
+    async def do_branch(b: dict):
+        try:
+            return await process_branch(sonar, client, key, b)
+        except Exception as exc:
+            return exc
+        finally:
+            if pbar:
+                pbar.update(1)
+
+    async def do_pr(pr: dict):
+        try:
+            return await process_pull_request(sonar, client, key, pr)
+        except Exception as exc:
+            return exc
+        finally:
+            if pbar:
+                pbar.update(1)
+
+    nb = len(branches_raw)
+    all_results = await asyncio.gather(
+        *[do_branch(b) for b in branches_raw],
+        *[do_pr(pr) for pr in prs_raw],
     )
 
-    # Vulnerabilities + hotspots for every branch and PR, all concurrent
-    branch_tasks = [process_branch(sonar, client, key, b) for b in branches_raw]
-    pr_tasks = [process_pull_request(sonar, client, key, pr) for pr in prs_raw]
-
-    all_results = await asyncio.gather(*branch_tasks, *pr_tasks,
-                                       return_exceptions=True)
-
-    nb = len(branch_tasks)
     branch_reports: list[BranchReport] = []
     pr_reports: list[PullRequestReport] = []
 
@@ -331,7 +349,7 @@ async def process_project(sonar: SonarQubeClient, client: httpx.AsyncClient,
 
     return ProjectReport(
         key=key,
-        name=name,
+        name=project["name"],
         last_analysis=project.get("lastAnalysisDate"),
         branches=branch_reports,
         pull_requests=pr_reports,
@@ -347,24 +365,37 @@ async def run(args: argparse.Namespace) -> list[ProjectReport]:
         verify_ssl=not args.no_verify_ssl,
     )
     async with httpx.AsyncClient(verify=not args.no_verify_ssl) as client:
-        print("Fetching all projects ...", flush=True)
+
+        # ── Phase 1: project list (progress bar inside get_all_projects) ──────
         projects = await sonar.get_all_projects(client)
-        print(f"Found {len(projects)} project(s). Fetching branch/PR/security data ...\n",
-              flush=True)
+        print(f"\nFound {len(projects)} project(s).\n", flush=True)
 
-        async def _safe_process(project: dict):
-            try:
-                return await process_project(sonar, client, project)
-            except Exception as exc:
-                return exc
+        # ── Phase 2: branch & PR lists for every project ──────────────────────
+        async def fetch_lists(p: dict) -> tuple[list[dict], list[dict]]:
+            branches, prs = await asyncio.gather(
+                sonar.get_branches(client, p["key"]),
+                sonar.get_pull_requests(client, p["key"]),
+            )
+            return branches, prs
 
-        tasks = [_safe_process(p) for p in projects]
-        results = await atqdm.gather(
-            *tasks,
-            desc="Fetching security data",
+        list_results: list[tuple[list[dict], list[dict]]] = await atqdm.gather(
+            *[fetch_lists(p) for p in projects],
+            desc="Fetching branches & PRs",
             unit="project",
             total=len(projects),
         )
+
+        # ── Phase 3: security data for every branch / PR ──────────────────────
+        total_items = sum(len(b) + len(p) for b, p in list_results)
+        with tqdm(desc="Fetching security data", unit="branch/PR",
+                  total=total_items) as pbar:
+            results = await asyncio.gather(
+                *[
+                    process_project(sonar, client, proj, branches, prs, pbar)
+                    for proj, (branches, prs) in zip(projects, list_results)
+                ],
+                return_exceptions=True,
+            )
 
     reports: list[ProjectReport] = []
     for i, r in enumerate(results):
