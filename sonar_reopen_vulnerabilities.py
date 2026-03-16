@@ -107,11 +107,11 @@ class IssueResult:
 # ── SonarQube Client ───────────────────────────────────────────────────────────
 
 class SonarQubeClient:
-    def __init__(self, base_url: str, token: str,
+    def __init__(self, base_url: str, username: str, password: str,
                  concurrency: int = DEFAULT_CONCURRENCY,
                  verify_ssl: bool = True):
         self.base_url = base_url.rstrip("/")
-        self._headers = {"Authorization": f"Bearer {token}"}
+        self.auth     = (username, password)
         self._sem     = asyncio.Semaphore(concurrency)
 
     async def _get(self, client: httpx.AsyncClient, path: str,
@@ -120,7 +120,7 @@ class SonarQubeClient:
             resp = await client.get(
                 f"{self.base_url}{path}",
                 params=params or {},
-                headers=self._headers,
+                auth=self.auth,
                 timeout=60.0,
             )
             resp.raise_for_status()
@@ -132,7 +132,7 @@ class SonarQubeClient:
             resp = await client.post(
                 f"{self.base_url}{path}",
                 data=data or {},
-                headers=self._headers,
+                auth=self.auth,
                 timeout=60.0,
             )
             resp.raise_for_status()
@@ -267,7 +267,8 @@ async def run(args: argparse.Namespace) -> list[IssueResult]:
 
     sonar = SonarQubeClient(
         base_url=args.url,
-        token=args.token,
+        username=args.username,
+        password=args.password,
         concurrency=args.concurrency,
         verify_ssl=not args.no_verify_ssl,
     )
@@ -477,8 +478,10 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--url",      default=os.getenv("SONAR_URL"),
                    help="SonarQube base URL  [env: SONAR_URL]")
-    p.add_argument("--token",    default=os.getenv("SONAR_TOKEN"),
-                   help="SonarQube user token with Administer Issues permission  [env: SONAR_TOKEN]")
+    p.add_argument("--username", default=os.getenv("SONAR_USERNAME"),
+                   help="SonarQube username  [env: SONAR_USERNAME]")
+    p.add_argument("--password", default=os.getenv("SONAR_PASSWORD"),
+                   help="SonarQube password  [env: SONAR_PASSWORD]")
     p.add_argument("--projects", default=os.getenv("SONAR_PROJECTS_FILE", "projects.txt"),
                    help="Text file with project keys, one per line  [env: SONAR_PROJECTS_FILE]")
     p.add_argument("--output",   default=os.getenv("SONAR_REOPEN_OUTPUT", "reopen_report.xlsx"),
@@ -497,16 +500,18 @@ def main() -> None:
     args = parse_args()
 
     missing = [f"--{k}" for k, v in
-               [("url", args.url), ("token", args.token)] if not v]
+               [("url", args.url), ("username", args.username),
+                ("password", args.password)] if not v]
     if missing:
         print(f"Error: missing required values: {', '.join(missing)}\n"
-              f"Pass them as CLI args or set SONAR_URL / SONAR_TOKEN "
+              f"Pass them as CLI args or set SONAR_URL / SONAR_USERNAME / SONAR_PASSWORD "
               f"in your environment / .env file.",
               file=sys.stderr)
         sys.exit(1)
 
     print("SonarQube Vulnerability Reopener")
     print(f"  URL         : {args.url}")
+    print(f"  Username    : {args.username}")
     print(f"  Projects    : {args.projects}")
     print(f"  Concurrency : {args.concurrency}")
     print(f"  Output      : {args.output}")

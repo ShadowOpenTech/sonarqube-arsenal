@@ -11,6 +11,7 @@ A growing collection of standalone automation and reporting scripts for [SonarQu
 | Script | Description | Docs |
 |--------|-------------|------|
 | [`sonar_security_report.py`](sonar_security_report.py) | Fetch vulnerabilities & security hotspots across all projects, branches, and PRs. Outputs to console, JSON, and Excel. | [docs](docs/sonar_security_report.md) |
+| [`sonar_reopen_vulnerabilities.py`](sonar_reopen_vulnerabilities.py) | Reopen all non-OPEN, non-CLOSED vulnerabilities across a list of projects and all their branches. Supports dry-run mode. Outputs an Excel report. | [docs](docs/sonar_reopen_vulnerabilities.md) |
 
 ---
 
